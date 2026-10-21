@@ -1,0 +1,363 @@
+SQLALCHEMY ORM QUERY REVISION NOTES
+==================================
+
+Stack used in practice:
+- Python
+- FastAPI
+- SQLite
+- SQLAlchemy ORM using the traditional db.query() style
+
+Assumed example model:
+    class Employee(Base):
+        __tablename__ = "employees"
+        id = Column(Integer, primary_key=True, index=True)
+        name = Column(String, nullable=False)
+        department = Column(String, nullable=False)
+        salary = Column(Integer, nullable=False)
+
+Assume each example runs inside an API function where `db: Session` is provided.
+For aggregate examples, import `func` from sqlalchemy.
+For OR examples, import `or_` from sqlalchemy.
+For AND examples, `and_` can be imported from sqlalchemy, though passing multiple
+conditions directly to filter() is simpler.
+
+--------------------------------------------------
+1. CREATE / INSERT A RECORD
+--------------------------------------------------
+
+new_employee = Employee(
+    name="Amit",
+    department="IT",
+    salary=60000
+)
+db.add(new_employee)
+db.commit()
+db.refresh(new_employee)
+
+Meaning:
+- Employee(...) creates a Python ORM object.
+- db.add(...) stages the new object for insertion.
+- db.commit() saves the transaction to the database.
+- db.refresh(...) reloads database-generated values, such as the new ID.
+
+--------------------------------------------------
+2. GET ALL RECORDS
+--------------------------------------------------
+
+employees = db.query(Employee).all()
+
+Returns all employees as a Python list.
+
+--------------------------------------------------
+3. FIND ONE RECORD BY ID
+--------------------------------------------------
+
+employee = db.query(Employee).filter(Employee.id == 2).first()
+
+- filter(...) adds a condition, similar to SQL WHERE.
+- first() returns the first matching object, or None if there is no match.
+
+--------------------------------------------------
+4. UPDATE A RECORD
+--------------------------------------------------
+
+employee = db.query(Employee).filter(Employee.id == 2).first()
+
+if employee is not None:
+    employee.salary = 60000
+    db.commit()
+
+Find the object, change its attribute, then commit the change.
+db.refresh(employee) can be used after commit if you need to reload its values.
+
+--------------------------------------------------
+5. DELETE A RECORD
+--------------------------------------------------
+
+employee = db.query(Employee).filter(Employee.id == 2).first()
+
+if employee is not None:
+    db.delete(employee)
+    db.commit()
+
+Find the object, mark it for deletion, and commit.
+
+--------------------------------------------------
+6. FILTER WITH COMPARISON OPERATORS
+--------------------------------------------------
+
+Salary greater than 50000:
+employees = db.query(Employee).filter(Employee.salary > 50000).all()
+
+Salary less than 50000:
+employees = db.query(Employee).filter(Employee.salary < 50000).all()
+
+Salary exactly 50000:
+employees = db.query(Employee).filter(Employee.salary == 50000).all()
+
+Other common comparisons:
+- !=  means not equal
+- >=  means greater than or equal to
+- <=  means less than or equal to
+
+--------------------------------------------------
+7. SEARCH TEXT WITH contains()
+--------------------------------------------------
+
+employees = db.query(Employee).filter(
+    Employee.name.contains("Rahul")
+).all()
+
+Finds names containing the text "Rahul". It is similar to a SQL LIKE search
+with wildcards around the text. Exact case-sensitivity can depend on the database.
+
+--------------------------------------------------
+8. MULTIPLE CONDITIONS: AND
+--------------------------------------------------
+
+Both conditions must be true. The simple form:
+
+employees = db.query(Employee).filter(
+    Employee.department == "IT",
+    Employee.salary > 50000
+).all()
+
+Equivalent explicit form:
+
+from sqlalchemy import and_
+
+employees = db.query(Employee).filter(
+    and_(
+        Employee.department == "IT",
+        Employee.salary > 50000
+    )
+).all()
+
+--------------------------------------------------
+9. MULTIPLE CONDITIONS: OR
+--------------------------------------------------
+
+At least one condition must be true:
+
+from sqlalchemy import or_
+
+employees = db.query(Employee).filter(
+    or_(
+        Employee.department == "IT",
+        Employee.salary > 50000
+    )
+).all()
+
+--------------------------------------------------
+10. SORT RECORDS: order_by(), asc(), desc()
+--------------------------------------------------
+
+Salary from lowest to highest:
+employees = db.query(Employee).order_by(Employee.salary.asc()).all()
+
+Salary from highest to lowest:
+employees = db.query(Employee).order_by(Employee.salary.desc()).all()
+
+You can also write:
+employees = db.query(Employee).order_by(Employee.salary).all()
+
+Ascending is the default when no direction is specified. Add order_by() when
+you need a defined order.
+
+--------------------------------------------------
+11. LIMIT RESULTS
+--------------------------------------------------
+
+Get at most 3 employees:
+employees = db.query(Employee).limit(3).all()
+
+For predictable “top 3 highest salary” results, sort before limiting:
+employees = db.query(Employee).order_by(
+    Employee.salary.desc()
+).limit(3).all()
+
+--------------------------------------------------
+12. OFFSET AND PAGINATION
+--------------------------------------------------
+
+Skip the first 3 rows and get the next 3:
+employees = db.query(Employee).offset(3).limit(3).all()
+
+Common pagination idea:
+- Page 1, 10 records: offset(0).limit(10)
+- Page 2, 10 records: offset(10).limit(10)
+- Page 3, 10 records: offset(20).limit(10)
+
+Use order_by() for stable, predictable pagination.
+
+--------------------------------------------------
+13. COUNT RECORDS
+--------------------------------------------------
+
+Count all employees:
+total = db.query(Employee).count()
+
+Count employees in IT:
+it_count = db.query(Employee).filter(
+    Employee.department == "IT"
+).count()
+
+count() returns a number rather than the employee objects.
+
+--------------------------------------------------
+14. AGGREGATE FUNCTIONS
+--------------------------------------------------
+
+Import:
+from sqlalchemy import func
+
+Total salary:
+total_salary = db.query(func.sum(Employee.salary)).scalar()
+
+Average salary:
+average_salary = db.query(func.avg(Employee.salary)).scalar()
+
+Highest salary:
+highest_salary = db.query(func.max(Employee.salary)).scalar()
+
+Lowest salary:
+lowest_salary = db.query(func.min(Employee.salary)).scalar()
+
+scalar() returns the single value produced by the aggregate query.
+For empty tables, some aggregates such as SUM, AVG, MAX, and MIN may return None.
+
+--------------------------------------------------
+15. HANDLE A MISSING RECORD / HTTP 404
+--------------------------------------------------
+
+from fastapi import HTTPException
+
+employee = db.query(Employee).filter(Employee.id == 10).first()
+
+if employee is None:
+    raise HTTPException(
+        status_code=404,
+        detail="Employee not found"
+    )
+
+return employee
+
+first() does not automatically return HTTP 404. Your code must check for None
+and raise the HTTPException when using FastAPI.
+
+--------------------------------------------------
+16. JOIN TWO TABLES
+--------------------------------------------------
+
+Example assumes two ORM models:
+- Employee: id, name, department_id
+- Department: id, department_name
+
+results = db.query(
+    Employee.name,
+    Department.department_name
+).join(
+    Department,
+    Employee.department_id == Department.id
+).all()
+
+The join condition matches Employee.department_id to Department.id.
+This example requires both models/tables and a valid join condition.
+
+--------------------------------------------------
+17. GROUP BY WITH COUNT
+--------------------------------------------------
+
+Count employees in each department:
+
+from sqlalchemy import func
+
+results = db.query(
+    Employee.department,
+    func.count(Employee.id)
+).group_by(
+    Employee.department
+).all()
+
+Conceptual result:
+    IT  -> 3
+    HR  -> 2
+
+group_by() creates groups for each distinct department. func.count() counts
+records inside each group.
+
+--------------------------------------------------
+18. GROUP BY WITH SUM
+--------------------------------------------------
+
+Example assumes a Sale model with product and amount columns:
+
+results = db.query(
+    Sale.product,
+    func.sum(Sale.amount)
+).group_by(
+    Sale.product
+).all()
+
+This calculates total sales amount for each product.
+
+--------------------------------------------------
+FAST RECALL: WHICH METHOD DOES WHAT?
+--------------------------------------------------
+
+db.add(obj)        -> stage a new ORM object for insertion
+db.commit()        -> commit database changes
+db.refresh(obj)    -> reload object values from the database
+db.query(Model)    -> begin a query using the traditional ORM query API
+filter(...)        -> apply conditions (WHERE-like behavior)
+all()              -> get all matching records as a list
+first()            -> get first match, or None
+count()            -> count matching records
+order_by(...)      -> sort results
+asc()              -> ascending order
+desc()             -> descending order
+limit(n)           -> return at most n records
+offset(n)          -> skip n records
+contains(text)     -> search for text inside a string column
+delete(obj)        -> mark an ORM object for deletion
+join(...)          -> join related table records
+group_by(...)      -> group records by column(s)
+func.count(...)    -> count rows within each group
+func.sum(...)      -> sum values
+func.avg(...)      -> average values
+func.max(...)      -> maximum value
+func.min(...)      -> minimum value
+scalar()           -> return a single scalar result
+
+--------------------------------------------------
+COMMON SQLALCHEMY IMPORTS
+--------------------------------------------------
+
+from sqlalchemy import func, or_, and_
+from fastapi import HTTPException
+
+Import only what the code you use actually needs.
+
+--------------------------------------------------
+REVISION CHECKLIST
+--------------------------------------------------
+
+[ ] Create an object and use add(), commit(), refresh()
+[ ] Retrieve all rows with all()
+[ ] Find one row with filter() and first()
+[ ] Update a found object's attributes and commit()
+[ ] Delete a found object and commit()
+[ ] Filter using >, <, ==, !=, >=, <=
+[ ] Search text with contains()
+[ ] Combine conditions using AND and OR
+[ ] Sort using order_by(), asc(), desc()
+[ ] Limit and paginate with limit() and offset()
+[ ] Count all rows or filtered rows
+[ ] Calculate sum, average, maximum, and minimum
+[ ] Handle missing records with None and HTTP 404
+[ ] Join two tables using matching columns
+[ ] Group records and calculate COUNT or SUM
+
+Note: These notes use SQLAlchemy's traditional db.query() style, matching our
+practice. They are revision examples, not a complete application. Employee,
+Department, and Sale are illustrative models and must be defined in your project.

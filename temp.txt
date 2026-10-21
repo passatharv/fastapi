@@ -1,0 +1,7 @@
+python -m venv myenv
+source myenv/bin/activate
+pip install fastapi uvicorn sqlalchemy jinja2 python-multipart
+uvicorn main:app --reload
+
+
+
